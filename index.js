@@ -83,16 +83,53 @@ const updateFile = (githubInformation, editor) => {
 }
 
 
+/**
+ *
+ * @param editors
+ * @param sha
+ * @returns {Promise}
+ */
+const updateRepo = (editors, sha) => {
+
+    return new Promise((resolve, reject) => {
+        const yamlString = YAML.stringify(editors, 2)
+        const base64Yaml = new Buffer(yamlString)
+
+        const updateOptions = getOptionsForRequest('put', urlToUpdate)
+        updateOptions.body = JSON.stringify({
+            "message": "Updated editors.yml with Lambda",
+            "committer": {
+                "name": username,
+                "email": email
+            },
+            "content": base64Yaml.toString('base64'),
+            "sha": sha
+        })
+
+        request(updateOptions, function (error, response, body) {
+            if (error) {
+                reject(error)
+                return
+            }
+
+            const parsedBody = JSON.parse(body)
+            const result = `Done:: File is pushed with SHA: ${parsedBody.commit.sha} (${parsedBody.commit.html_url})`
+            resolve(result)
+        })
+    })
+
+}
+
 const start = (event, context, callback) => { //Learn more about these lamba params at http://docs.aws.amazon.com/lambda/latest/dg/welcome.html
 
     const options = getOptionsForRequest('get', urlToUpdate)
     getRepoInformation(options.url)
         .then(repoData => {
-            const fileContent = Buffer.from(repoData.content, 'base64')
-            const content = String(fileContent)
-            const editorsInConfigFile = YAML.parse(content)
 
-            const repoFetches = editorsInConfigFile.map(editor => {
+            const fileContent = Buffer.from(repoData.content, 'base64')
+            const editors = YAML.parse(String(fileContent))
+
+            const repoFetches = editors.map(editor => {
                 const repoPath = parseUrlForRepoName(editor.github)
                 const repoUrl = `https://${username}:${key}@api.github.com/repos${repoPath}`
                 return getRepoInformation(repoUrl)
@@ -104,30 +141,12 @@ const start = (event, context, callback) => { //Learn more about these lamba par
             Promise.all(repoFetches).then(() => {
                 console.info(`All editors updated`)
 
-                const yamlString = YAML.stringify(editorsInConfigFile, 2)
-                const base64Yaml = new Buffer(yamlString)
-
-                const updateOptions = getOptionsForRequest('put', urlToUpdate)
-                updateOptions.body = JSON.stringify({
-                    "message": "Updated editors.yml with Lambda",
-                    "committer": {
-                        "name": username,
-                        "email": email
-                    },
-                    "content": base64Yaml.toString('base64'),
-                    "sha": repoData.sha
-                })
-
-                request(updateOptions, function (error, response, body) {
-                    if (error) {
-                        callback(error, null)
-                        return
-                    }
-
-                    const parsedBody = JSON.parse(body)
-                    const result = `Done:: File is pushed with SHA: ${parsedBody.commit.sha} (${parsedBody.commit.html_url})`
+                updateRepo(editors, repoData.sha).then(result => {
                     callback(null, result);
+                }).catch(error => {
+                    callback(error, null)
                 })
+
             })
         })
 }
